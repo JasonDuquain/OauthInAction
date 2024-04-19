@@ -40,22 +40,67 @@ app.get('/', function (req, res) {
 
 app.get('/authorize', function(req, res){
 	/* Send the user to the autho server */
+	state = randomstring.generate();
+
 	var authorizeUrl = buildUrl(authServer.authorizationEndpoint, {
 		response_type: "code",
 		client_id: client.client_id,
-		redirect_uri: client.redirect_uris[0]
+		redirect_uri: client.redirect_uris[0],
+		state: state
 	});
 	res.redirect(authorizeUrl);
 });
 
 app.get('/callback', function(req, res){
-	/* Parse the response from the autho server and get a token */
+	if (req.query.state != state) {
+		res.render('error', {error: 'state value did not match'})
+	}
 	
-});
+	var code = req.query.code;
+	var form_data = qs.stringify({
+	grant_type: 'authorization_code',
+	code: code,
+	redirect_uri: client.redirect_uris[0]
+	});
+	var headers = {
+	'Content-Type': 'application/x-www-form-urlencoded',
+	'Authorization': 'Basic ' + encodeClientCredentials(client.client_id,
+	client.client_secret)
+	};
+	var tokRes = request('POST', authServer.tokenEndpoint, {
+	body: form_data,
+	headers: headers
+	});
+	console.log('Requesting access token for code %s',code);
+
+	var body = JSON.parse(tokRes.getBody());
+	access_token = body.access_token;
+	
+	res.render('index', {access_token: access_token, scope: scope});
+	});
 
 app.get('/fetch_resource', function(req, res) {
 	/* Use the access token to call the resource server */
+	if (!access_token) {
+		res.render('error', {error: 'Missing access token.'});
+		return;
+	}
+	var headers = {
+		'Authorization': 'Bearer ' + access_token
+		};
+		var resource = request('POST', protectedResource,
+		{headers: headers}
+		);
 	
+		if (resource.statusCode >= 200 && resource.statusCode < 300) {
+			var body = JSON.parse(resource.getBody());
+			res.render('data', {resource: body});
+			return;
+		} else {
+				res.render('error', {error: 'Server returned response code: ' + resource.
+				statusCode});
+				return;
+			}	
 });
 
 var buildUrl = function(base, options, hash) {
